@@ -1,4 +1,4 @@
-#define _GNU_SOURCE         /* See feature_test_macros(7) */
+#define _GNU_SOURCE /* See feature_test_macros(7) */
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -9,6 +9,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <time.h>
 
 #define MAXLINE 1024
 #define PROXY_SERVER_PORT 12345
@@ -17,9 +18,8 @@
 
 /*
     https://blog.51cto.com/laokaddk/989911 - set timeout
-
+    SO_REUSEPORT
 */
-
 
 /*
     Client ------> Proxy ------> Server
@@ -323,16 +323,19 @@ int main(int argc, char **argv)
                 return 0;
             }
             int num_bytes;
-            while (1)
+            time_t start_t, end_t;
+            time(&start_t);
+            while (difftime(time(&end_t), start_t) < 10)    // 10 sec timeout
             {
                 memset(https_res, 0, MAXLINE);
                 num_bytes = recv(connfd, https_res, MAXLINE, MSG_DONTWAIT);
                 if (num_bytes > 0)
                 {
+                    time(&start_t); // reset the start time
                     if (send(destination_fd, https_res, num_bytes, MSG_DONTWAIT) < 0)
                     {
-                        printf("write to server error, error message: %s\n",strerror(errno));
-                    } 
+                        printf("write to server error, error message: %s\n", strerror(errno));
+                    }
                 }
                 else if (num_bytes < 0)
                 {
@@ -346,7 +349,11 @@ int main(int argc, char **argv)
                 num_bytes = recv(destination_fd, https_res, MAXLINE, MSG_DONTWAIT);
                 if (num_bytes > 0)
                 {
-                    send(connfd, https_res, num_bytes, MSG_DONTWAIT);
+                    time(&start_t); // reset the start time
+                    if (send(connfd, https_res, num_bytes, MSG_DONTWAIT) < 0)
+                    {
+                        printf("write to browser error, error message: %s\n", strerror(errno));
+                    }
                 }
                 else if (num_bytes < 0)
                 {
@@ -357,7 +364,8 @@ int main(int argc, char **argv)
                     printf("server shutdown!\n");
                 }
             }
-
+            printf("out of while loop!\n");
+            return 0;
             // printf("after 200: \n%s",https_res);
         }
         //printf("exit https_connection\n");
