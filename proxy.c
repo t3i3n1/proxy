@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <time.h>
+#include <pthread.h>
 
 #define MAXLINE 1024
 #define PROXY_SERVER_PORT 12345
@@ -18,6 +19,8 @@
 
 /*
     https://blog.51cto.com/laokaddk/989911 - set timeout
+    https://zake7749.github.io/2015/03/17/SocketProgramming/ 
+    https://github.com/vmsandeeprao/HTTP-proxy-server/blob/master/proxy.c
     SO_REUSEPORT
 */
 
@@ -31,12 +34,36 @@
         int http_or_https(char*) - return 1 if CONNECT method is used, 0 otherwise
         void log_init() - open a log file for debug purpose
         //void prepare_https_header(char* in, char*out, int fd) - delete the 'Proxy-Connection' from 'in' and return to 'out'
-        int https_connection(char* msg, int client_fd) - redirect the https request to the server 
+        int establish_connection(char* msg, int client_fd) - 
         void read_msg(int fd, char* msg) - read from the file descriptor and put the header messages into msg
-
+        void reconstruct_http_header
 */
 
-int https_connection(char *msg, int client_fd)
+void reconstruct_http_header(char *msg, char *new_msg)
+{
+    char *method_p;
+    method_p = strstr(msg, " ");
+    if (method_p == NULL)
+    {
+        printf("strstr error\n");
+    }
+    char hostname[50];
+    get_hostname(msg, hostname);
+    //printf("hostname: %s\n",hostname);
+    int host_length = strlen(hostname) + 7; // 7 for http://
+    //printf("host name length: %d\n", host_length);
+    strncpy(new_msg, msg, method_p - msg + 1);
+    int i = method_p - msg + 1;
+    for (; i < strlen(msg); i++)
+    {
+        new_msg[i] = msg[i + host_length];
+    }
+    //printf("new_msg: \n%s", new_msg);
+
+    return;
+}
+
+int establish_connection(char *msg, int client_fd)
 {
     //printf("message: \n%s", msg);
     char hostname[100] = {0};
@@ -102,45 +129,6 @@ int https_connection(char *msg, int client_fd)
     }
     printf("write response code 200 to client!\n");
     return server_fd;
-    // int n = 0;
-    // char recvline[MAXLINE] = {0};
-    // while (1)
-    // {
-    //     printf("inside while loop 1\n");
-    //     n = read(client_fd, recvline, sizeof(recvline) - 1);
-    //     if (n <= 0)
-    //     {
-    //         printf("loop1 break \n");
-    //         break;
-    //     }
-    //     else
-    //     {
-    //         recvline[n] = 0; /* 0 terminate */
-    //         write(server_fd, recvline, strlen(recvline));
-    //         memset(recvline, 0, sizeof(recvline));
-    //         while (1)
-    //         {
-    //             printf("inside while loop 2\n");
-    //             n = read(server_fd, recvline, sizeof(recvline) - 1);
-    //             if (n <= 0)
-    //             {
-    //                 printf("loop2 break \n");
-    //                 break;
-    //             }
-    //             else
-    //             {
-    //                 recvline[n] = 0; /* 0 terminate */
-    //                 printf("while loop 2 response: %s",recv);
-    //                 write(client_fd, recvline, strlen(recvline));
-    //                 memset(recvline, 0, sizeof(recvline));
-    //             }
-    //         }
-    //     }
-    // }
-
-    /* close the connection */
-    //close(server_fd);
-    // return;
 }
 
 // remember to close the file
@@ -184,26 +172,31 @@ void get_hostname(char *msg, char *hostname)
     {
         return;
     }
+    //printf("result: \n%s\n", result);
     int num, i;
     result += 6; // skip the first six character
-    char *p1 = strstr(result, ":");
-    if (p1 != NULL)
+    //printf("result:\n%s\n",result);
+    char *p1;
+    char *p2;
+    p1 = strstr(result, "\n");
+    p2 = strstr(result, "\r");
+    if (p2 > p1)
     {
+        /* host not in the last line*/
         num = (int)(p1 - result); // calculate the length of the hostname
+        printf("hostname length: %d\n", num);
         for (i = 0; i < num; i++)
         {
             hostname[i] = result[i];
         }
         hostname[i] = '\0';
-    }
-    else
+    }else
     {
-        for (i = 0; i < strlen(result); i++)
+        /* host is in the last line */
+        num = (int)(p2 - result); // calculate the length of the hostname
+        printf("hostname length: %d\n", num);
+        for (i = 0; i < num; i++)
         {
-            if (result[i] == '\r')
-            {
-                break;
-            }
             hostname[i] = result[i];
         }
         hostname[i] = '\0';
@@ -312,20 +305,22 @@ int main(int argc, char **argv)
             return 0;
         }
         read_msg(connfd, recv_msg);
-        printf("msg: \n%s", recv_msg);
+        //printf("msg: \n%s", recv_msg);
         if (http_or_https(recv_msg))
         {
-            //printf("first message:\n%s",recv_msg);
-            destination_fd = https_connection(recv_msg, connfd); // establish https connection
+            return 0;
+            /* https connection */
+            destination_fd = establish_connection(recv_msg, connfd); // establish https connection
             if (destination_fd == -1)
             {
                 printf("https connection fail\n");
-                return 0;
+                //return 0;
+                break;  
             }
             int num_bytes;
             time_t start_t, end_t;
             time(&start_t);
-            while (difftime(time(&end_t), start_t) < 10)    // 10 sec timeout
+            while (difftime(time(&end_t), start_t) < 10) // 10 sec timeout
             {
                 memset(https_res, 0, MAXLINE);
                 num_bytes = recv(connfd, https_res, MAXLINE, MSG_DONTWAIT);
@@ -364,10 +359,26 @@ int main(int argc, char **argv)
                     printf("server shutdown!\n");
                 }
             }
-            printf("out of while loop!\n");
-            return 0;
-            // printf("after 200: \n%s",https_res);
+            // printf("out of while loop!\n");
+            // return 0;
         }
+        else
+        {
+            /* http connection */
+            printf("http message: \n%s\n", recv_msg);
+            char reconstructed_msg[500];
+            reconstruct_http_header(recv_msg,reconstructed_msg);
+            printf("new msg: \n%s\n",reconstructed_msg);
+            // destination_fd = establish_connection(recv_msg, connfd); // establish https connection
+            // if (destination_fd == -1)
+            // {
+            //     printf("https connection fail\n");
+            //     break;
+            // }
+
+
+        }
+
         //printf("exit https_connection\n");
 
         //printf("%s", recv); // print message
