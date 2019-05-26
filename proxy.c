@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <time.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 #define MAXLINE 1024
 #define PROXY_SERVER_PORT 12345
@@ -34,7 +35,8 @@
         int http_or_https(char*) - return 1 if CONNECT method is used, 0 otherwise
         void log_init() - open a log file for debug purpose
         //void prepare_https_header(char* in, char*out, int fd) - delete the 'Proxy-Connection' from 'in' and return to 'out'
-        int establish_connection(char* msg, int client_fd) - 
+        int https_connection(char* msg, int client_fd) - 
+        int http_conection(char* msg)
         void read_msg(int fd, char* msg) - read from the file descriptor and put the header messages into msg
         void reconstruct_http_header
 */
@@ -63,7 +65,61 @@ void reconstruct_http_header(char *msg, char *new_msg)
     return;
 }
 
-int establish_connection(char *msg, int client_fd)
+int http_connection(char *msg)
+{
+    char hostname[100] = {0};
+    struct addrinfo hints;
+    struct addrinfo *result, *rp;
+    int server_fd = 0;
+    int s;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_INET; /* Allow IPv4 */
+    //hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
+    //hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE; /* For wildcard IP address */
+    hints.ai_protocol = 0;       /* Any protocol */
+    hints.ai_canonname = NULL;
+    hints.ai_addr = NULL;
+    hints.ai_next = NULL;
+    /* bind the destination ip to a socket, then send back 200 OK to the source*/
+    get_hostname(msg, hostname);
+    s = getaddrinfo(hostname, "80", &hints, &result); // port = 80 for http
+    if (s != 0)
+    {
+        printf("http getaddrinfo error: %s\n", gai_strerror(s));
+        freeaddrinfo(result); /* No longer needed */
+        return -1;
+    }
+    for (rp = result; rp != NULL; rp = rp->ai_next)
+    {
+        server_fd = socket(rp->ai_family, rp->ai_socktype,
+                           rp->ai_protocol);
+        if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
+        {
+            printf("http setsockopt(SO_REUSEADDR) failed");
+        }
+        if (connect(server_fd, rp->ai_addr, rp->ai_addrlen) < 0)
+        {
+            printf("http_connection Error: fail to connect\n");
+        }
+        else
+        {
+            freeaddrinfo(result); /* No longer needed */
+            break;                // established connection
+        }
+    }
+    if (rp == NULL)
+    { /* No address succeeded */
+        printf("http_connection error: Could not connect to any address\n");
+        freeaddrinfo(result); /* No longer needed */
+        return -1;
+    }
+    /* connected successfully, return the server file descriptor*/
+    return server_fd;
+}
+
+int https_connection(char *msg, int client_fd)
 {
     //printf("message: \n%s", msg);
     char hostname[100] = {0};
@@ -83,11 +139,11 @@ int establish_connection(char *msg, int client_fd)
     hints.ai_next = NULL;
     /* bind the destination ip to a socket, then send back 200 OK to the source*/
     get_hostname(msg, hostname);
-    s = getaddrinfo(hostname, "443", &hints, &result); // port = 443
+    s = getaddrinfo(hostname, "443", &hints, &result); // port = 443 for tcp
 
     if (s != 0)
     {
-        printf("getaddrinfo error: %s\n", gai_strerror(s));
+        printf("https getaddrinfo error: %s\n", gai_strerror(s));
         freeaddrinfo(result); /* No longer needed */
         return -1;
     }
@@ -97,7 +153,7 @@ int establish_connection(char *msg, int client_fd)
                            rp->ai_protocol);
         if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
         {
-            printf("setsockopt(SO_REUSEADDR) failed");
+            printf("htts setsockopt(SO_REUSEADDR) failed");
         }
         if (connect(server_fd, rp->ai_addr, rp->ai_addrlen) < 0)
         {
@@ -116,11 +172,11 @@ int establish_connection(char *msg, int client_fd)
         return -1;
     }
     /* connected successfully, now construct the response message and send back to client*/
-    printf("connect successful\n");
-    if (connect(server_fd, rp->ai_addr, rp->ai_addrlen) < 0)
-    {
-        printf("this is normal!\n");
-    }
+    printf("https connect successful\n");
+    // if (connect(server_fd, rp->ai_addr, rp->ai_addrlen) < 0)
+    // {
+    //     printf("this is normal!\n");
+    // }
     char response_msg[50] = {0};
     sprintf(response_msg, "%s", "HTTP/1.1 200 Connection Established\r\n\r\n");
     if (write(client_fd, response_msg, strlen(response_msg)) < 0)
@@ -184,17 +240,18 @@ void get_hostname(char *msg, char *hostname)
     {
         /* host not in the last line*/
         num = (int)(p1 - result); // calculate the length of the hostname
-        printf("hostname length: %d\n", num);
+        //printf("hostname length: %d\n", num);
         for (i = 0; i < num; i++)
         {
             hostname[i] = result[i];
         }
         hostname[i] = '\0';
-    }else
+    }
+    else
     {
         /* host is in the last line */
         num = (int)(p2 - result); // calculate the length of the hostname
-        printf("hostname length: %d\n", num);
+        //printf("hostname length: %d\n", num);
         for (i = 0; i < num; i++)
         {
             hostname[i] = result[i];
@@ -255,10 +312,12 @@ int main(int argc, char **argv)
     socklen_t len = sizeof(struct sockaddr_in);
     char recv_msg[MAXLINE] = {0};
     char https_res[MAXLINE] = {0};
+    char http_res[MAXLINE] = {0};
     char ip_str[INET_ADDRSTRLEN] = {0};
     char buff = 0;
     int n, i, j;
     char hostname[100];
+    char reconstructed_msg[500];
 
     /* initialize the log file*/
     //log_init(&logfd);
@@ -310,18 +369,19 @@ int main(int argc, char **argv)
         {
             return 0;
             /* https connection */
-            destination_fd = establish_connection(recv_msg, connfd); // establish https connection
-            if (destination_fd == -1)
+            destination_fd = https_connection(recv_msg, connfd); // establish https connection
+            if (destination_fd < 0)
             {
                 printf("https connection fail\n");
                 //return 0;
-                break;  
+                break;
             }
             int num_bytes;
             time_t start_t, end_t;
             time(&start_t);
             while (difftime(time(&end_t), start_t) < 10) // 10 sec timeout
             {
+                /* relaying messages between client and server */
                 memset(https_res, 0, MAXLINE);
                 num_bytes = recv(connfd, https_res, MAXLINE, MSG_DONTWAIT);
                 if (num_bytes > 0)
@@ -365,18 +425,79 @@ int main(int argc, char **argv)
         else
         {
             /* http connection */
-            printf("http message: \n%s\n", recv_msg);
-            char reconstructed_msg[500];
-            reconstruct_http_header(recv_msg,reconstructed_msg);
-            printf("new msg: \n%s\n",reconstructed_msg);
-            // destination_fd = establish_connection(recv_msg, connfd); // establish https connection
-            // if (destination_fd == -1)
-            // {
-            //     printf("https connection fail\n");
-            //     break;
-            // }
+            // printf("http message: \n%s\n", recv_msg);
+            reconstruct_http_header(recv_msg, reconstructed_msg);
+            // printf("new msg: \n%s\n",reconstructed_msg);
+            destination_fd = http_connection(recv_msg);
+            if (destination_fd < 0)
+            {
+                printf("http connection fail!\n");
+                break;
+            }
+            //while (1)
+            //{
+            int num_bytes;
+            memset(http_res, 0, MAXLINE);
+            if (send(destination_fd, reconstructed_msg, strlen(reconstructed_msg), MSG_DONTWAIT) < 0)
+            {
+                printf("write to server error, error message: %s\n", strerror(errno));
+            }
+            //num_bytes = recv(destination_fd, http_res, MAXLINE, MSG_DONTWAIT);
+            num_bytes = recv(destination_fd, http_res, MAXLINE, NULL);
+            if (num_bytes > 0)
+            {
+                if (strstr(http_res, "chunked") != NULL)
+                {
+                    printf("first chunked msg: \n%s\n", http_res);
+                    /* response header with Transfer-Encoding: chunked */
+                    // char buf[MAXLINE];
+                    // char* final_msg = calloc(MAXLINE,sizeof(char));
+                    // strcat(final_msg,http_res);
+                    // int total_length = strlen(final_msg);
+                    // int counter = 1;
+                    // while (strstr(final_msg, "0\r\n\r\n") == NULL)
+                    // {
+                    //     num_bytes = recv(destination_fd, buf, MAXLINE, MSG_DONTWAIT);
+                    //     if (num_bytes + total_length >= counter*MAXLINE){
+                    //         counter++;
+                    //         printf("i: %d\n",counter);
+                    //         final_msg = realloc(final_msg,counter*MAXLINE*sizeof(char));
+                    //     }
+                    //     strcat(final_msg,buf);
+                    //     total_length += num_bytes;
+                    //     memset(buf, 0, MAXLINE);
+                    //     //printf("chunked msg: \n%s", http_res);
+                    // }
+                    while (strstr(http_res, "0\r\n\r\n") == NULL)
+                    {
+                        memset(http_res, 0, MAXLINE);
+                        num_bytes = recv(destination_fd, http_res, MAXLINE, MSG_DONTWAIT);
+                        if (num_bytes > 0){
+                            printf("chunked: \n%s\n",http_res);
+                        }
+                    }
+                
+                    printf("out of chunked while loop\n");
+                    return 0;
+                }
+                else if (strstr(http_res, "Content-Length") != NULL)
+                {
+                    /* response header with content-length */
+                    printf("content length!\n");
+                    return 0;
+                }
+                else
+                {
+                    /* code */
+                }
+            }
+            else
+            {
+                printf("num of bytes is less than zero!\n");
+            }
+            return 0;
 
-
+            //}
         }
 
         //printf("exit https_connection\n");
