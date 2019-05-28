@@ -39,7 +39,40 @@
         int http_conection(char* msg)
         void read_msg(int fd, char* msg) - read from the file descriptor and put the header messages into msg
         void reconstruct_http_header
+        int access_control(char* hostname,int client) - check if the hostname matches those in the access control list, if matches return 404 to client and return 1
 */
+
+int access_control(char *hostname, int client_fd)
+{
+    FILE *ban_list = fopen("access_control.txt", "r");
+    char *line = NULL;
+    size_t len = 0;
+    ssize_t result;
+    if (ban_list != NULL)
+    {
+        while ((result = getline(&line, &len, ban_list)) != -1)
+        {
+            if (strstr(line, hostname) != NULL)
+            {
+                /* return 404 */
+                char response_msg[50] = {0};
+                sprintf(response_msg, "%s", "HTTP/1.1 404 Not Found\r\n\r\n");
+                if (write(client_fd, response_msg, strlen(response_msg)) < 0)
+                {
+                    printf("write to client error!\n");
+                }
+                return 1;
+            }
+            free(line);
+        }
+    }
+    else
+    {
+        printf("fail to open access_control.txt\n");
+    }
+    fclose(ban_list);
+    return 0;
+}
 
 void reconstruct_http_header(char *msg, char *new_msg)
 {
@@ -65,7 +98,7 @@ void reconstruct_http_header(char *msg, char *new_msg)
     return;
 }
 
-int http_connection(char *msg)
+int http_connection(char *msg,int client_fd)
 {
     char hostname[100] = {0};
     struct addrinfo hints;
@@ -84,6 +117,12 @@ int http_connection(char *msg)
     hints.ai_next = NULL;
     /* bind the destination ip to a socket, then send back 200 OK to the source*/
     get_hostname(msg, hostname);
+    if (access_control(hostname,client_fd))
+    {
+        close(client_fd);
+        return -1;
+    }
+    //printf("http host name:%s\n",hostname);
     s = getaddrinfo(hostname, "80", &hints, &result); // port = 80 for http
     if (s != 0)
     {
@@ -139,6 +178,13 @@ int https_connection(char *msg, int client_fd)
     hints.ai_next = NULL;
     /* bind the destination ip to a socket, then send back 200 OK to the source*/
     get_hostname(msg, hostname);
+    printf("https hostname:%s\n",hostname);
+    if (access_control(hostname,client_fd))
+    {
+        close(client_fd);
+        return -1;
+    }
+    //printf("hostname: %s\n", hostname);
     s = getaddrinfo(hostname, "443", &hints, &result); // port = 443 for tcp
 
     if (s != 0)
@@ -232,14 +278,20 @@ void get_hostname(char *msg, char *hostname)
     int num, i;
     result += 6; // skip the first six character
     //printf("result:\n%s\n",result);
-    char *p1;
-    char *p2;
-    p1 = strstr(result, "\n");
-    p2 = strstr(result, "\r");
+    char *p1 = strstr(result, "\n");
+    char *p2 = strstr(result, "\r");
+    char *p3 = strstr(result, ":");
     if (p2 > p1)
     {
         /* host not in the last line*/
-        num = (int)(p1 - result); // calculate the length of the hostname
+        if (p3 < p1)
+        {
+            num = (int)(p3 - result); // calculate the length of the hostname up until the ":"
+        }
+        else
+        {
+            num = (int)(p1 - result); // calculate the length of the hostname up until "\n"
+        }
         //printf("hostname length: %d\n", num);
         for (i = 0; i < num; i++)
         {
@@ -250,7 +302,14 @@ void get_hostname(char *msg, char *hostname)
     else
     {
         /* host is in the last line */
-        num = (int)(p2 - result); // calculate the length of the hostname
+        if (p3 < p2)
+        {
+            num = (int)(p3 - result); // calculate the length of the hostname up until the ":"
+        }
+        else
+        {
+            num = (int)(p2 - result); // calculate the length of the hostname up until "\r"
+        }
         //printf("hostname length: %d\n", num);
         for (i = 0; i < num; i++)
         {
@@ -367,12 +426,11 @@ int main(int argc, char **argv)
         //printf("msg: \n%s", recv_msg);
         if (http_or_https(recv_msg))
         {
-            return 0;
             /* https connection */
             destination_fd = https_connection(recv_msg, connfd); // establish https connection
             if (destination_fd < 0)
             {
-                printf("https connection fail\n");
+                printf("https connection fail or 404\n");
                 //return 0;
                 break;
             }
@@ -428,10 +486,10 @@ int main(int argc, char **argv)
             // printf("http message: \n%s\n", recv_msg);
             reconstruct_http_header(recv_msg, reconstructed_msg);
             // printf("new msg: \n%s\n",reconstructed_msg);
-            destination_fd = http_connection(recv_msg);
+            destination_fd = http_connection(recv_msg,connfd);
             if (destination_fd < 0)
             {
-                printf("http connection fail!\n");
+                printf("http connection fail o 404!\n");
                 break;
             }
             //while (1)
@@ -472,11 +530,12 @@ int main(int argc, char **argv)
                     {
                         memset(http_res, 0, MAXLINE);
                         num_bytes = recv(destination_fd, http_res, MAXLINE, MSG_DONTWAIT);
-                        if (num_bytes > 0){
-                            printf("chunked: \n%s\n",http_res);
+                        if (num_bytes > 0)
+                        {
+                            printf("chunked: \n%s\n", http_res);
                         }
                     }
-                
+
                     printf("out of chunked while loop\n");
                     return 0;
                 }
