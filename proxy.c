@@ -18,12 +18,6 @@
 #define LISTENNQ 5
 #define HTTP_HEADER_LAST_CHAR_NUM 4
 
-/*
-    https://blog.51cto.com/laokaddk/989911 - set timeout
-    https://zake7749.github.io/2015/03/17/SocketProgramming/ 
-    https://github.com/vmsandeeprao/HTTP-proxy-server/blob/master/proxy.c
-    SO_REUSEPORT
-*/
 
 /*
     Client ------> Proxy ------> Server
@@ -507,40 +501,39 @@ int main(int argc, char **argv)
             {
                 if (strstr(http_res, "chunked") != NULL)
                 {
-                    printf("first chunked msg: \n%s\n", http_res);
+                    //printf("first chunked msg: \n%s\n", http_res);
                     if (send(connfd, http_res, num_bytes, MSG_DONTWAIT) < 0)
                     {
                         printf("write to server error, error message: %s\n", strerror(errno));
                     }
-                    /* response header with Transfer-Encoding: chunked */
-                    // char buf[MAXLINE];
-                    // char* final_msg = calloc(MAXLINE,sizeof(char));
-                    // strcat(final_msg,http_res);
-                    // int total_length = strlen(final_msg);
-                    // int counter = 1;
-                    // while (strstr(final_msg, "0\r\n\r\n") == NULL)
-                    // {
-                    //     num_bytes = recv(destination_fd, buf, MAXLINE, MSG_DONTWAIT);
-                    //     if (num_bytes + total_length >= counter*MAXLINE){
-                    //         counter++;
-                    //         printf("i: %d\n",counter);
-                    //         final_msg = realloc(final_msg,counter*MAXLINE*sizeof(char));
-                    //     }
-                    //     strcat(final_msg,buf);
-                    //     total_length += num_bytes;
-                    //     memset(buf, 0, MAXLINE);
-                    //     //printf("chunked msg: \n%s", http_res);
-                    // }
-                    while (strstr(http_res, "0\r\n\r\n") == NULL)
+                    i = 0;
+                    char *terminator = "\r\n\r\n";
+                    char last4chars[HTTP_HEADER_LAST_CHAR_NUM + 1] = {0};
+                    char recv[MAXLINE] = {0};
+                    while (strcmp(last4chars, terminator) != 0)
                     {
-                        memset(http_res, 0, MAXLINE);
-                        num_bytes = recv(destination_fd, http_res, MAXLINE, MSG_DONTWAIT);
-                        if (num_bytes > 0)
+                        n = read(connfd, &buff, sizeof(buff));
+
+                        if (n <= 0)
                         {
-                            if (send(connfd, http_res, num_bytes, MSG_DONTWAIT) < 0)
-                            {
-                                printf("write to server error, error message: %s\n", strerror(errno));
-                            }
+                            break;
+                        }
+
+                        recv[i++] = buff;
+                        if (send(connfd, buff, n, MSG_DONTWAIT) < 0)
+                        {
+                            printf("write to server error, error message: %s\n", strerror(errno));
+                        }
+                        /* retrive last 4 chars */
+                        for (j = 0; j < HTTP_HEADER_LAST_CHAR_NUM; ++j)
+                        {
+                            last4chars[j] = recv[i - HTTP_HEADER_LAST_CHAR_NUM + j];
+                        }
+
+                        if (i == 1023)
+                        {
+                            memset(recv, 0, MAXLINE);
+                            i = 0;
                         }
                     }
 
@@ -572,25 +565,7 @@ int main(int argc, char **argv)
                     {
                         printf("write to server error, error message: %s\n", strerror(errno));
                     }
-                    // printf("data_p: \n%s\n",data_p);
-                    // printf("temp: \n%s\n",temp);
-                    // if (send(connfd, temp, length, MSG_DONTWAIT) < 0)
-                    // {
-                    //     printf("write to server error, error message: %s\n", strerror(errno));
-                    // }
-                    // char response_msg[50] = {0};
-                    // sprintf(response_msg, "%s", "HTTP/1.1 200 OK\r\n\r\n");
-                    // if (send(connfd, response_msg, strlen(response_msg), MSG_DONTWAIT) < 0)
-                    // {
-                    //     printf("write to server error, error message: %s\n", strerror(errno));
-                    // }
-                    // data_p += 4;
-                    // if (send(destination_fd, data_p, length, MSG_DONTWAIT) < 0)
-                    // {
-                    //     printf("write to server error, error message: %s\n", strerror(errno));
-                    // }
 
-                    //return 0;
                 }
                 else
                 {
@@ -601,16 +576,10 @@ int main(int argc, char **argv)
             {
                 printf("num of bytes is less than zero!\n");
             }
-            //return 0;
 
-            //}
         }
 
-        //printf("exit https_connection\n");
 
-        //printf("%s", recv); // print message
-        /* close the connection */
-        //close(connfd);
     }
 
     return 0;
