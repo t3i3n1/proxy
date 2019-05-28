@@ -30,7 +30,6 @@
 */
 
 /* helper function
-
         void get_hostname(char* packet,char* hostname) - extract the hostname string from 'packet' and return to 'hostname'
         int http_or_https(char*) - return 1 if CONNECT method is used, 0 otherwise
         void log_init() - open a log file for debug purpose
@@ -437,7 +436,7 @@ int main(int argc, char **argv)
             int num_bytes;
             time_t start_t, end_t;
             time(&start_t);
-            while (difftime(time(&end_t), start_t) < 10) // 10 sec timeout
+            while (difftime(time(&end_t), start_t) < 5) // 5 sec timeout
             {
                 /* relaying messages between client and server */
                 memset(https_res, 0, MAXLINE);
@@ -477,6 +476,7 @@ int main(int argc, char **argv)
                     printf("server shutdown!\n");
                 }
             }
+            close(connfd);
             // printf("out of while loop!\n");
             // return 0;
         }
@@ -495,6 +495,7 @@ int main(int argc, char **argv)
             //while (1)
             //{
             int num_bytes;
+            char *p = NULL;
             memset(http_res, 0, MAXLINE);
             if (send(destination_fd, reconstructed_msg, strlen(reconstructed_msg), MSG_DONTWAIT) < 0)
             {
@@ -539,12 +540,51 @@ int main(int argc, char **argv)
                     printf("out of chunked while loop\n");
                     return 0;
                 }
-                else if (strstr(http_res, "Content-Length") != NULL)
+                else if ((p = strstr(http_res, "Content-Length")) != NULL)
+            {
+                /* response header with content-length */
+                int length = 0;
+                char *data_p;
+                char buf;
+                //printf("http_res: \n%s\n", http_res);
+                sscanf(p, "Content-Length: %d\n", &length);
+                //printf("length: %d\n", length);
+                data_p = strstr(p, "\r\n\r\n");
+                long total = data_p - http_res;
+                //printf("total: %ld\n", total);
+                // char temp[MAXLINE];
+                // strncpy(temp, http_res, total + 2);
+                // strcat(temp, "\r\n\r\n");
+                //printf("temp: \n%s\n",temp);
+                // printf("first char: %c\n",http_res[0]);
+                // printf("strlen: %ld\n",strlen(&http_res[0]));
+
+                // data_p += 4;
+                // strncat(temp, data_p, length);
+                if (send(connfd, http_res, total + length + 4, MSG_DONTWAIT) < 0)
                 {
-                    /* response header with content-length */
-                    printf("content length!\n");
-                    return 0;
+                    printf("write to server error, error message: %s\n", strerror(errno));
                 }
+                // printf("data_p: \n%s\n",data_p);
+                // printf("temp: \n%s\n",temp);
+                // if (send(connfd, temp, length, MSG_DONTWAIT) < 0)
+                // {
+                //     printf("write to server error, error message: %s\n", strerror(errno));
+                // }
+                // char response_msg[50] = {0};
+                // sprintf(response_msg, "%s", "HTTP/1.1 200 OK\r\n\r\n");
+                // if (send(connfd, response_msg, strlen(response_msg), MSG_DONTWAIT) < 0)
+                // {
+                //     printf("write to server error, error message: %s\n", strerror(errno));
+                // }
+                // data_p += 4;
+                // if (send(destination_fd, data_p, length, MSG_DONTWAIT) < 0)
+                // {
+                //     printf("write to server error, error message: %s\n", strerror(errno));
+                // }
+
+                //return 0;
+            }
                 else
                 {
                     /* code */
