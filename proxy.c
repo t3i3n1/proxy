@@ -97,7 +97,7 @@ void reconstruct_http_header(char *msg, char *new_msg)
     return;
 }
 
-int http_connection(char *msg,int client_fd)
+int http_connection(char *msg, int client_fd)
 {
     char hostname[100] = {0};
     struct addrinfo hints;
@@ -116,7 +116,7 @@ int http_connection(char *msg,int client_fd)
     hints.ai_next = NULL;
     /* bind the destination ip to a socket, then send back 200 OK to the source*/
     get_hostname(msg, hostname);
-    if (access_control(hostname,client_fd))
+    if (access_control(hostname, client_fd))
     {
         close(client_fd);
         return -1;
@@ -177,8 +177,8 @@ int https_connection(char *msg, int client_fd)
     hints.ai_next = NULL;
     /* bind the destination ip to a socket, then send back 200 OK to the source*/
     get_hostname(msg, hostname);
-    printf("https hostname:%s\n",hostname);
-    if (access_control(hostname,client_fd))
+    printf("https hostname:%s\n", hostname);
+    if (access_control(hostname, client_fd))
     {
         close(client_fd);
         return -1;
@@ -486,7 +486,7 @@ int main(int argc, char **argv)
             // printf("http message: \n%s\n", recv_msg);
             reconstruct_http_header(recv_msg, reconstructed_msg);
             // printf("new msg: \n%s\n",reconstructed_msg);
-            destination_fd = http_connection(recv_msg,connfd);
+            destination_fd = http_connection(recv_msg, connfd);
             if (destination_fd < 0)
             {
                 printf("http connection fail o 404!\n");
@@ -508,6 +508,10 @@ int main(int argc, char **argv)
                 if (strstr(http_res, "chunked") != NULL)
                 {
                     printf("first chunked msg: \n%s\n", http_res);
+                    if (send(connfd, http_res, num_bytes, MSG_DONTWAIT) < 0)
+                    {
+                        printf("write to server error, error message: %s\n", strerror(errno));
+                    }
                     /* response header with Transfer-Encoding: chunked */
                     // char buf[MAXLINE];
                     // char* final_msg = calloc(MAXLINE,sizeof(char));
@@ -533,58 +537,61 @@ int main(int argc, char **argv)
                         num_bytes = recv(destination_fd, http_res, MAXLINE, MSG_DONTWAIT);
                         if (num_bytes > 0)
                         {
-                            printf("chunked: \n%s\n", http_res);
+                            if (send(connfd, http_res, num_bytes, MSG_DONTWAIT) < 0)
+                            {
+                                printf("write to server error, error message: %s\n", strerror(errno));
+                            }
                         }
                     }
 
                     printf("out of chunked while loop\n");
-                    return 0;
+                    //return 0;
                 }
                 else if ((p = strstr(http_res, "Content-Length")) != NULL)
-            {
-                /* response header with content-length */
-                int length = 0;
-                char *data_p;
-                char buf;
-                //printf("http_res: \n%s\n", http_res);
-                sscanf(p, "Content-Length: %d\n", &length);
-                //printf("length: %d\n", length);
-                data_p = strstr(p, "\r\n\r\n");
-                long total = data_p - http_res;
-                //printf("total: %ld\n", total);
-                // char temp[MAXLINE];
-                // strncpy(temp, http_res, total + 2);
-                // strcat(temp, "\r\n\r\n");
-                //printf("temp: \n%s\n",temp);
-                // printf("first char: %c\n",http_res[0]);
-                // printf("strlen: %ld\n",strlen(&http_res[0]));
-
-                // data_p += 4;
-                // strncat(temp, data_p, length);
-                if (send(connfd, http_res, total + length + 4, MSG_DONTWAIT) < 0)
                 {
-                    printf("write to server error, error message: %s\n", strerror(errno));
-                }
-                // printf("data_p: \n%s\n",data_p);
-                // printf("temp: \n%s\n",temp);
-                // if (send(connfd, temp, length, MSG_DONTWAIT) < 0)
-                // {
-                //     printf("write to server error, error message: %s\n", strerror(errno));
-                // }
-                // char response_msg[50] = {0};
-                // sprintf(response_msg, "%s", "HTTP/1.1 200 OK\r\n\r\n");
-                // if (send(connfd, response_msg, strlen(response_msg), MSG_DONTWAIT) < 0)
-                // {
-                //     printf("write to server error, error message: %s\n", strerror(errno));
-                // }
-                // data_p += 4;
-                // if (send(destination_fd, data_p, length, MSG_DONTWAIT) < 0)
-                // {
-                //     printf("write to server error, error message: %s\n", strerror(errno));
-                // }
+                    /* response header with content-length */
+                    int length = 0;
+                    char *data_p;
+                    char buf;
+                    //printf("http_res: \n%s\n", http_res);
+                    sscanf(p, "Content-Length: %d\n", &length);
+                    //printf("length: %d\n", length);
+                    data_p = strstr(p, "\r\n\r\n");
+                    long total = data_p - http_res;
+                    //printf("total: %ld\n", total);
+                    // char temp[MAXLINE];
+                    // strncpy(temp, http_res, total + 2);
+                    // strcat(temp, "\r\n\r\n");
+                    //printf("temp: \n%s\n",temp);
+                    // printf("first char: %c\n",http_res[0]);
+                    // printf("strlen: %ld\n",strlen(&http_res[0]));
 
-                //return 0;
-            }
+                    // data_p += 4;
+                    // strncat(temp, data_p, length);
+                    if (send(connfd, http_res, total + length + 4, MSG_DONTWAIT) < 0)
+                    {
+                        printf("write to server error, error message: %s\n", strerror(errno));
+                    }
+                    // printf("data_p: \n%s\n",data_p);
+                    // printf("temp: \n%s\n",temp);
+                    // if (send(connfd, temp, length, MSG_DONTWAIT) < 0)
+                    // {
+                    //     printf("write to server error, error message: %s\n", strerror(errno));
+                    // }
+                    // char response_msg[50] = {0};
+                    // sprintf(response_msg, "%s", "HTTP/1.1 200 OK\r\n\r\n");
+                    // if (send(connfd, response_msg, strlen(response_msg), MSG_DONTWAIT) < 0)
+                    // {
+                    //     printf("write to server error, error message: %s\n", strerror(errno));
+                    // }
+                    // data_p += 4;
+                    // if (send(destination_fd, data_p, length, MSG_DONTWAIT) < 0)
+                    // {
+                    //     printf("write to server error, error message: %s\n", strerror(errno));
+                    // }
+
+                    //return 0;
+                }
                 else
                 {
                     /* code */
@@ -594,7 +601,7 @@ int main(int argc, char **argv)
             {
                 printf("num of bytes is less than zero!\n");
             }
-            return 0;
+            //return 0;
 
             //}
         }
